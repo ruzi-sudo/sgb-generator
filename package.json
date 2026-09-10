@@ -1,0 +1,29 @@
+{
+  "name": "sgb",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.5.1",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "adm-zip": "^0.5.16",
+    "dotenv": "^16.4.5",
+    "hono": "^4.6.14",
+    "mammoth": "^1.8.0",
+    "openai": "^4.77.0",
+    "pdf-parse": "^1.1.1"
+  }
+}

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>银行文档结构化提取</title>
+<style>
+  :root {
+    --bg: #f6f7fb;
+    --card: #fff;
+    --border: #e3e6ee;
+    --primary: #3b5bfd;
+    --primary-hover: #2f4be0;
+    --danger: #e5484d;
+    --muted: #6b7280;
+    --ok: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: #111827;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  .subtitle { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  }
+
+  .config-bar {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    font-size: 13px; color: var(--muted);
+  }
+  .config-bar span b { color: #111827; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .pill-ok   { background: #dcfce7; color: #166534; }
+  .pill-warn { background: #fef3c7; color: #92400e; }
+
+  .dropzone {
+    border: 2px dashed #c7ccdb; border-radius: 12px; padding: 40px 20px;
+    text-align: center; transition: all .15s ease; cursor: pointer;
+    background: #fafbff;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--primary); background: #eef2ff;
+  }
+  .dropzone p { margin: 8px 0; color: var(--muted); }
+  .dropzone .hint { font-size: 12px; }
+
+  .file-list { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .file-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: #f8fafc; border-radius: 8px; font-size: 13px;
+  }
+  .file-item .name { flex: 1; word-break: break-all; }
+  .file-item .size { color: var(--muted); }
+  .file-item .remove {
+    cursor: pointer; color: var(--danger); padding: 2px 6px; border-radius: 4px;
+  }
+  .file-item .remove:hover { background: #fee2e2; }
+
+  .actions { display: flex; gap: 12px; margin-top: 16px; }
+  button {
+    font: inherit; padding: 10px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: white; color: #111827;
+    transition: all .15s;
+  }
+  button:hover { background: #f3f4f6; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary {
+    background: var(--primary); color: white; border-color: var(--primary);
+  }
+  button.primary:hover:not(:disabled) { background: var(--primary-hover); }
+
+  .status { margin-top: 12px; font-size: 14px; min-height: 20px; }
+  .status.error { color: var(--danger); }
+  .status.ok    { color: var(--ok); }
+  .status.loading::before {
+    content: "⏳ "; display: inline-block;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  h2 { font-size: 18px; margin: 28px 0 12px; }
+
+  .record {
+    border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+    margin-bottom: 12px; background: white;
+  }
+  .record-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; flex-wrap: wrap;
+  }
+  .record-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
+  .record-time { font-size: 12px; color: var(--muted); }
+  .record-files { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  .userdata {
+    margin-top: 12px; background: #0f172a; color: #e2e8f0;
+    padding: 12px; border-radius: 8px; font-size: 12px;
+    font-family: ui-monospace, monospace; overflow-x: auto;
+    white-space: pre;
+  }
+
+  .record-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .record-actions a, .record-actions button {
+    text-decoration: none; font-size: 13px; padding: 6px 12px;
+  }
+  .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 32px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📄 银行文档结构化提取</h1>
+  <p class="subtitle">上传多个 DOCX / PDF，自动解析并调用大模型生成结构化 userData</p>
+
+  <div class="card">
+    <div class="config-bar" id="configBar">正在加载服务器配置…</div>
+  </div>
+
+  <div class="card">
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" multiple accept=".docx,.pdf" hidden>
+      <div style="font-size:34px">📥</div>
+      <p><b>拖拽文件到此处</b>，或点击选择</p>
+      <p class="hint">支持 .docx / .pdf，可多选</p>
+    </div>
+
+    <div class="file-list" id="fileList"></div>
+
+    <div class="actions">
+      <button id="uploadBtn" class="primary" disabled>开始解析</button>
+      <button id="clearBtn" disabled>清空列表</button>
+    </div>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <h2>缓存记录</h2>
+  <div id="records"><div class="empty">暂无缓存记录</div></div>
+</div>
+
+<script>
+// ============================================================
+// 状态
+// ============================================================
+let selectedFiles = [];
+let serverConfig = null;
+
+// ============================================================
+// 工具
+// ============================================================
+const fmtSize = (n) => {
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/1024/1024).toFixed(2) + ' MB';
+};
+const fmtTime = (iso) => new Date(iso).toLocaleString('zh-CN', { hour12: false });
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+// ============================================================
+// 元素
+// ============================================================
+const $ = (id) => document.getElementById(id);
+const configBar = $('configBar');
+const dropzone  = $('dropzone');
+const fileInput = $('fileInput');
+const fileList  = $('fileList');
+const uploadBtn = $('uploadBtn');
+const clearBtn  = $('clearBtn');
+const statusEl  = $('status');
+const recordsEl = $('records');
+
+// ============================================================
+// 加载服务器配置
+// ============================================================
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    serverConfig = await res.json();
+    renderConfig();
+  } catch {
+    configBar.textContent = '无法加载配置';
+  }
+}
+function renderConfig() {
+  const c = serverConfig;
+  configBar.innerHTML = `
+    <span>模型：<b>${esc(c.model)}</b></span>
+    <span>BASE_URL：<b>${esc(c.baseURL)}</b></span>
+    <span>API KEY：${c.hasApiKey
+      ? '<span class="pill pill-ok">已配置</span>'
+      : '<span class="pill pill-warn">缺失</span>'}</span>
+    <span>模板：${c.hasTemplate
+      ? '<span class="pill pill-ok">已配置</span>'
+      : '<span class="pill pill-warn">缺失</span>'}</span>
+  `;
+  if (!c.hasApiKey) {
+    uploadBtn.disabled = true;
+    uploadBtn.title = '服务器未配置 LLM_API_KEY';
+  }
+}
+
+// ============================================================
+// 文件选择与拖拽
+// ============================================================
+dropzone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => {
+  addFiles([...e.target.files]);
+  fileInput.value = '';
+});
+['dragenter','dragover'].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); }));
+['dragleave','drop'].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
+dropzone.addEventListener('drop', (e) => {
+  addFiles([...(e.dataTransfer?.files || [])]);
+});
+
+function addFiles(files) {
+  for (const f of files) {
+    const ext = f.name.split('.').pop().toLowerCase();
+    if (!['docx','pdf'].includes(ext)) continue;
+    if (selectedFiles.some(s => s.name === f.name && s.size === f.size)) continue;
+    selectedFiles.push(f);
+  }
+  renderFileList();
+}
+
+function renderFileList() {
+  fileList.innerHTML = '';
+  selectedFiles.forEach((f, i) => {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.innerHTML = `
+      <span>📎</span>
+      <span class="name">${esc(f.name)}</span>
+      <span class="size">${fmtSize(f.size)}</span>
+      <span class="remove" data-i="${i}">✕</span>
+    `;
+    fileList.appendChild(item);
+  });
+  fileList.querySelectorAll('.remove').forEach(el => {
+    el.addEventListener('click', () => {
+      selectedFiles.splice(Number(el.dataset.i), 1);
+      renderFileList();
+    });
+  });
+  uploadBtn.disabled = selectedFiles.length === 0 || !serverConfig?.hasApiKey;
+  clearBtn.disabled  = selectedFiles.length === 0;
+}
+
+clearBtn.addEventListener('click', () => {
+  selectedFiles = [];
+  renderFileList();
+  setStatus('');
+});
+
+// ============================================================
+// 上传 & 解析
+// ============================================================
+function setStatus(text, type = '') {
+  statusEl.className = 'status ' + type;
+  statusEl.textContent = text;
+}
+
+uploadBtn.addEventListener('click', async () => {
+  if (selectedFiles.length === 0) return;
+
+  const fd = new FormData();
+  for (const f of selectedFiles) fd.append('files', f, f.name);
+
+  uploadBtn.disabled = true;
+  clearBtn.disabled  = true;
+  setStatus(`正在上传并解析 ${selectedFiles.length} 个文件，请稍候…`, 'loading');
+
+  try {
+    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    setStatus(`✅ 解析完成，缓存记录已生成：${data.record.id}`, 'ok');
+    selectedFiles = [];
+    renderFileList();
+    await loadRecords();
+  } catch (err) {
+    setStatus(`❌ ${err.message}`, 'error');
+  } finally {
+    uploadBtn.disabled = selectedFiles.length === 0;
+    clearBtn.disabled  = selectedFiles.length === 0;
+  }
+});
+
+// ============================================================
+// 缓存记录列表
+// ============================================================
+async function loadRecords() {
+  const res = await fetch('/api/records');
+  const { records } = await res.json();
+  renderRecords(records);
+}
+
+function renderRecords(records) {
+  if (!records.length) {
+    recordsEl.innerHTML = '<div class="empty">暂无缓存记录</div>';
+    return;
+  }
+  recordsEl.innerHTML = '';
+  for (const r of records) {
+    const el = document.createElement('div');
+    el.className = 'record';
+    el.dataset.id = r.id;
+
+    const filesHtml = r.files.map(f =>
+      `<a href="/api/records/${r.id}/files/${encodeURIComponent(f.name)}" style="color:inherit;text-decoration:none">📎 ${esc(f.name)}</a>`
+    ).join(' · ');
+
+    const docxBtn = serverConfig?.hasTemplate
+      ? `<a class="primary" style="background:var(--primary);color:#fff;border:1px solid var(--primary);border-radius:8px;text-decoration:none;padding:6px 12px" href="/api/records/${r.id}/docx">⬇️ 下载 DOCX</a>`
+      : '';
+
+    el.innerHTML = `
+      <div class="record-head">
+        <div>
+          <div class="record-id">#${r.id}</div>
+          <div class="record-time">${fmtTime(r.createdAt)} · 模型：${esc(r.llm?.model || '-')}</div>
+        </div>
+        <button class="danger-btn" data-action="delete" data-id="${r.id}"
+          style="color:var(--danger);border-color:#fecaca">🗑 删除</button>
+      </div>
+      <div class="record-files">${filesHtml}</div>
+      <div class="userdata">${esc(JSON.stringify(r.userData, null, 2))}</div>
+      <div class="record-actions">
+        <a href="/api/records/${r.id}/userdata" style="border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:#111827">⬇️ 下载 userData.json</a>
+        ${docxBtn}
+      </div>
+    `;
+    recordsEl.appendChild(el);
+  }
+
+  recordsEl.querySelectorAll('[data-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!confirm(`确认删除缓存记录 #${id}？该操作不可恢复。`)) return;
+      await fetch(`/api/records/${id}`, { method: 'DELETE' });
+      await loadRecords();
+    });
+  });
+}
+
+// ============================================================
+// 启动
+// ============================================================
+(async () => {
+  await loadConfig();
+  await loadRecords();
+})();
+</script>
+</body>
+</html>
