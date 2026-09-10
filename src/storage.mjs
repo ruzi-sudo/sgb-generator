@@ -1,12 +1,12 @@
 // src/storage.mjs
 // ============================================================
-// 缓存记录以「每条记录一个文件夹」的形式存放到项目里的 CACHE_DIR
+// 缓存记录以「每条记录一个文件夹」的形式存放到 CACHE_DIR
 // 结构：
 //   cache/
 //     <id>/
 //       meta.json              # { id, createdAt, files, userData, llm }
 //       uploads/               # 原始上传文件副本
-//       generated.docx         # 生成后的文档（下载后才写入）
+//       generated.docx         # 生成后的文档（下载时才写）
 // ============================================================
 import fs from 'fs/promises';
 import path from 'path';
@@ -19,7 +19,7 @@ export async function initStorage() {
 }
 
 function genId() {
-  return crypto.randomBytes(8).toString('hex'); // 16 位 hex
+  return crypto.randomBytes(8).toString('hex');
 }
 
 function recordDir(id) {
@@ -32,11 +32,9 @@ export function getRecordDir(id) {
 }
 
 export function getUploadPath(id, name) {
-  const safeName = path.basename(name);
-  return path.join(recordDir(id), 'uploads', safeName);
+  return path.join(recordDir(id), 'uploads', path.basename(name));
 }
 
-// ------------------------------------------------------------
 export async function createRecord({ files, userData, llm }) {
   const id = genId();
   const dir = path.join(CACHE_DIR, id);

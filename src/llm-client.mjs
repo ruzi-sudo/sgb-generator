@@ -1,6 +1,6 @@
 // src/llm-client.mjs
 // ============================================================
-// 只负责：把已解析好的文档送给大模型 → 拿到严格字段的 userData
+// 只负责：把已解析好的文档送给大模型 → 返回严格字段的 userData
 // ============================================================
 import OpenAI from 'openai';
 
@@ -24,7 +24,7 @@ ${FIELD_KEYS.map(k => `- ${k}: ${FIELDS_SCHEMA[k]}`).join('\n')}
 1. 输出必须是合法 JSON 对象，键名严格使用上述 6 个英文键，不得新增/改名/遗漏。
 2. 找不到的字段值设为 null。
 3. 不要输出任何解释、注释、markdown 代码块，只输出纯 JSON。
-4. 文档中若有"黄色高亮"文本，优先作为字段值的来源。
+4. 若文档中存在"黄色高亮"文本，优先作为字段值的来源。
 5. 多份文档冲突时，以最后一份文档为准。
 6. 数字类字段保留完整原始格式。
 7. 地址不要做拼写纠正，原样输出。
@@ -50,12 +50,13 @@ function safeJsonParse(str) {
 }
 
 /**
+ * 从已解析的文档中提取结构化 userData
  * @param {Object} opts
  * @param {{name:string,text:string,highlights?:string[]}[]} opts.documents
  * @param {string} [opts.baseURL]
  * @param {string}  opts.apiKey
  * @param {string}  opts.model
- * @returns {Promise<Object>} 严格按 FIELD_KEYS 顺序的 userData
+ * @returns {Promise<Object>}
  */
 export async function extractUserData({ documents, baseURL, apiKey, model }) {
   if (!Array.isArray(documents) || documents.length === 0) throw new Error('documents 不能为空');
@@ -72,23 +73,33 @@ export async function extractUserData({ documents, baseURL, apiKey, model }) {
     { role: 'user',   content: buildUserPrompt(documents) }
   ];
 
+  // 针对 gemma-4-E4B 的采样参数（换成 GPT-4o / DeepSeek / 通义时把这几个参数恢复为 temperature: 0 即可）
+  const tuning = {
+    temperature: 1.0,
+    top_p: 0.95,
+    extra_body: { enable_thinking: false }
+  };
+
   let raw;
   try {
     const resp = await client.chat.completions.create({
       model,
       messages,
       response_format: { type: 'json_object' },
-      temperature: 0
+      ...tuning
     });
     raw = safeJsonParse(resp.choices[0].message.content);
   } catch (err) {
     console.warn('⚠️ JSON 模式不可用，回退普通调用：', err.message);
     const resp = await client.chat.completions.create({
-      model, messages, temperature: 0
+      model,
+      messages,
+      ...tuning
     });
     raw = safeJsonParse(resp.choices[0].message.content);
   }
 
+  // 严格按 FIELD_KEYS 顺序 + 白名单过滤
   const userData = {};
   for (const key of FIELD_KEYS) userData[key] = raw[key] ?? null;
   return userData;

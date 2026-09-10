@@ -40,12 +40,8 @@ const config = {
 async function initConfig() {
   await initStorage();
   config.hasTemplate = fssync.existsSync(config.templatePath);
-  if (!config.apiKey) {
-    console.warn('⚠️  未配置 LLM_API_KEY，上传解析将会失败。');
-  }
-  if (!config.hasTemplate) {
-    console.warn(`⚠️  未找到模板：${config.templatePath}（DOCX 生成功能将不可用）`);
-  }
+  if (!config.apiKey) console.warn('⚠️  未配置 LLM_API_KEY，上传解析将会失败。');
+  if (!config.hasTemplate) console.warn(`⚠️  未找到模板：${config.templatePath}（DOCX 生成功能将不可用）`);
 }
 
 // ------------------------------------------------------------
@@ -53,22 +49,21 @@ async function initConfig() {
 // ------------------------------------------------------------
 const app = new Hono();
 
-// ---- 静态资源（前端页面） ----
+// ---- 静态资源 ----
 app.use('/static/*', serveStatic({ root: './public' }));
 app.get('/', async (c) => {
   const html = await fs.readFile(path.join(projectRoot, 'public', 'index.html'), 'utf8');
   return c.html(html);
 });
 
-// ---- 配置信息（供前端展示） ----
+// ---- 配置信息 ----
 app.get('/api/config', (c) => c.json({
   model: config.model,
   baseURL: config.baseURL,
   hasApiKey: Boolean(config.apiKey),
   hasTemplate: config.hasTemplate,
-  fields: FIELDS_SCHEMA_KEYS
+  fields: FIELD_KEYS
 }));
-const FIELDS_SCHEMA_KEYS = FIELD_KEYS;
 
 // ------------------------------------------------------------
 // 1) 上传 -> 解析 -> LLM -> 写缓存
@@ -77,10 +72,10 @@ app.post('/api/upload', async (c) => {
   if (!config.apiKey) return c.json({ error: '服务器未配置 LLM_API_KEY' }, 500);
 
   const formData = await c.req.formData();
-  const rawFiles = formData.getAll('files').filter(f => f && typeof f === 'object' && 'arrayBuffer' in f);
+  const rawFiles = formData.getAll('files')
+    .filter(f => f && typeof f === 'object' && 'arrayBuffer' in f);
   if (rawFiles.length === 0) return c.json({ error: '未收到任何文件' }, 400);
 
-  // 读取为 Buffer
   const files = [];
   for (const f of rawFiles) {
     const ab = await f.arrayBuffer();
@@ -91,7 +86,6 @@ app.post('/api/upload', async (c) => {
     });
   }
 
-  // 解析
   let documents;
   try {
     documents = await Promise.all(files.map(f => parseDocumentBuffer(f.name, f.buffer)));
@@ -99,7 +93,6 @@ app.post('/api/upload', async (c) => {
     return c.json({ error: `文档解析失败：${err.message}` }, 400);
   }
 
-  // 调用大模型
   let userData;
   try {
     userData = await extractUserData({
@@ -112,7 +105,6 @@ app.post('/api/upload', async (c) => {
     return c.json({ error: `大模型请求失败：${err.message}` }, 502);
   }
 
-  // 写缓存
   const record = await createRecord({
     files,
     userData,
@@ -123,12 +115,9 @@ app.post('/api/upload', async (c) => {
 });
 
 // ------------------------------------------------------------
-// 2) 缓存记录列表 / 详情 / 删除
+// 2) 列表 / 详情 / 删除
 // ------------------------------------------------------------
-app.get('/api/records', async (c) => {
-  const records = await listRecords();
-  return c.json({ records });
-});
+app.get('/api/records', async (c) => c.json({ records: await listRecords() }));
 
 app.get('/api/records/:id', async (c) => {
   try {
@@ -163,9 +152,8 @@ app.get('/api/records/:id/userdata', async (c) => {
 app.get('/api/records/:id/files/:name', async (c) => {
   const id = c.req.param('id');
   const name = c.req.param('name');
-  const filePath = getUploadPath(id, name);
   try {
-    const buf = await fs.readFile(filePath);
+    const buf = await fs.readFile(getUploadPath(id, name));
     return new Response(buf, {
       headers: {
         'Content-Type': 'application/octet-stream',

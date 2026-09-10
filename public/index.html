@@ -97,6 +97,8 @@
   .record-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); }
   .record-time { font-size: 12px; color: var(--muted); }
   .record-files { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .record-files a { color: #111827; text-decoration: none; }
+  .record-files a:hover { text-decoration: underline; }
 
   .userdata {
     margin-top: 12px; background: #0f172a; color: #e2e8f0;
@@ -108,6 +110,10 @@
   .record-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   .record-actions a, .record-actions button {
     text-decoration: none; font-size: 13px; padding: 6px 12px;
+    border-radius: 8px; border: 1px solid var(--border); color: #111827;
+  }
+  .record-actions a.primary {
+    background: var(--primary); color: white; border-color: var(--primary);
   }
   .empty { color: var(--muted); font-size: 14px; text-align: center; padding: 32px 0; }
 </style>
@@ -176,7 +182,7 @@ const statusEl  = $('status');
 const recordsEl = $('records');
 
 // ============================================================
-// 加载服务器配置
+// 加载配置
 // ============================================================
 async function loadConfig() {
   try {
@@ -206,7 +212,7 @@ function renderConfig() {
 }
 
 // ============================================================
-// 文件选择与拖拽
+// 文件选择 & 拖拽
 // ============================================================
 dropzone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', (e) => {
@@ -296,7 +302,7 @@ uploadBtn.addEventListener('click', async () => {
 });
 
 // ============================================================
-// 缓存记录列表
+// 缓存记录
 // ============================================================
 async function loadRecords() {
   const res = await fetch('/api/records');
@@ -316,11 +322,11 @@ function renderRecords(records) {
     el.dataset.id = r.id;
 
     const filesHtml = r.files.map(f =>
-      `<a href="/api/records/${r.id}/files/${encodeURIComponent(f.name)}" style="color:inherit;text-decoration:none">📎 ${esc(f.name)}</a>`
+      `<a href="/api/records/${r.id}/files/${encodeURIComponent(f.name)}">📎 ${esc(f.name)}</a>`
     ).join(' · ');
 
     const docxBtn = serverConfig?.hasTemplate
-      ? `<a class="primary" style="background:var(--primary);color:#fff;border:1px solid var(--primary);border-radius:8px;text-decoration:none;padding:6px 12px" href="/api/records/${r.id}/docx">⬇️ 下载 DOCX</a>`
+      ? `<a class="primary" href="/api/records/${r.id}/docx">⬇️ 下载 DOCX</a>`
       : '';
 
     el.innerHTML = `
@@ -329,13 +335,13 @@ function renderRecords(records) {
           <div class="record-id">#${r.id}</div>
           <div class="record-time">${fmtTime(r.createdAt)} · 模型：${esc(r.llm?.model || '-')}</div>
         </div>
-        <button class="danger-btn" data-action="delete" data-id="${r.id}"
+        <button data-action="delete" data-id="${r.id}"
           style="color:var(--danger);border-color:#fecaca">🗑 删除</button>
       </div>
       <div class="record-files">${filesHtml}</div>
       <div class="userdata">${esc(JSON.stringify(r.userData, null, 2))}</div>
       <div class="record-actions">
-        <a href="/api/records/${r.id}/userdata" style="border:1px solid var(--border);border-radius:8px;padding:6px 12px;color:#111827">⬇️ 下载 userData.json</a>
+        <a href="/api/records/${r.id}/userdata">⬇️ 下载 userData.json</a>
         ${docxBtn}
       </div>
     `;
