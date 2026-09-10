@@ -37,12 +37,6 @@ function extractHighlightsFromDocx(buffer) {
   }
 }
 
-/**
- * 解析单个上传文档
- * @param {string} name
- * @param {Buffer} buffer
- * @returns {Promise<{name:string,text:string,highlights:string[]}>}
- */
 export async function parseDocumentBuffer(name, buffer) {
   const ext = path.extname(name).toLowerCase();
 
@@ -70,20 +64,88 @@ function escapeXml(s) {
     .replace(/>/g, '&gt;');
 }
 
-// 大小写不敏感 + 支持内部空格：{{$Date}} / {{ $date }} 均可
 const PLACEHOLDER_REGEX = /\{\{\s*\$(\w+)\s*\}\}/g;
+
+/** 抽出一个 run 内所有 <w:t> 文本 */
+function extractRunText(runXml) {
+  let text = '';
+  const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
+  let m;
+  while ((m = re.exec(runXml)) !== null) text += m[1];
+  return text;
+}
+
+/** 把 run 内所有 <w:t> 改成 newText（第一个承载全部，其余清空，保留原属性） */
+function setRunText(runXml, newText) {
+  let first = true;
+  return runXml.replace(/<w:t(\s[^>]*)?>([\s\S]*?)<\/w:t>/g, (whole, attrs) => {
+    if (!first) return '';
+    first = false;
+    return `<w:t${attrs || ''} xml:space="preserve">${escapeXml(newText)}</w:t>`;
+  });
+}
+
+/**
+ * ★ 段落级替换：
+ *   1) 抽出一个 <w:p> 里所有 run 及其文本
+ *   2) 把所有 run 的文本拼成整段字符串
+ *   3) 在整段字符串里做 {{$Field}} 替换
+ *   4) 把替换后的整段文本塞回第一个 run，其余 run 的 <w:t> 清空
+ *
+ * 优点：不关心 Word 怎么拆 run / 怎么分颜色，一律能命中
+ */
+function replaceInParagraph(paraXml, valueByField, stats) {
+  // 收集所有 run
+  const runs = [];
+  const runRe = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+  let m;
+  while ((m = runRe.exec(paraXml)) !== null) {
+    runs.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      xml: m[0],
+      text: extractRunText(m[0])
+    });
+  }
+  if (runs.length === 0) return paraXml;
+
+  // 段落整文本
+  const combined = runs.map(r => r.text).join('');
+  if (!combined.includes('{{')) return paraXml;
+
+  // 做替换
+  const newCombined = combined.replace(PLACEHOLDER_REGEX, (ph, fieldName) => {
+    stats.found.add(ph);
+    const val = valueByField[fieldName.toLowerCase()];
+    if (val === undefined) {
+      stats.missed.add(ph);
+      return ph;
+    }
+    stats.replaced++;
+    return escapeXml(val);
+  });
+
+  if (newCombined === combined) return paraXml;
+
+  // 把 newCombined 放回第一个 run，其余 run 清空
+  // 从后往前替换以避免位置偏移
+  let out = paraXml;
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const r = runs[i];
+    const text = i === 0 ? newCombined : '';
+    const newXml = setRunText(r.xml, text);
+    out = out.substring(0, r.start) + newXml + out.substring(r.end);
+  }
+  return out;
+}
 
 /**
  * 生成新 DOCX
- * @param {string} inputPath
- * @param {string} outputPath
- * @param {Object} userData
  */
 export function generateAccountDoc(inputPath, outputPath, userData) {
-  if (!userData || typeof userData !== 'object') {
-    throw new Error('userData 无效');
-  }
+  if (!userData || typeof userData !== 'object') throw new Error('userData 无效');
 
+  // 字段索引：小写字段名 → 字符串值
   const valueByField = {};
   for (const [k, v] of Object.entries(userData)) {
     if (v === undefined || v === null) continue;
@@ -95,80 +157,47 @@ export function generateAccountDoc(inputPath, outputPath, userData) {
   if (!xmlBuf) throw new Error('无法找到 word/document.xml，请确认模板是否为有效的 docx。');
   let xml = xmlBuf.toString('utf8');
 
-  let replaced = 0;
-  const foundPlaceholders = new Set();
-  const missedPlaceholders = new Set();
-
-  // ---------- 第一步：单个 <w:t> 内替换 ----------
-  xml = xml.replace(/<w:t(\s[^>]*)?>([\s\S]*?)<\/w:t>/g, (whole, attrs, content) => {
-    if (!content.includes('{{')) return whole;
-
-    const newContent = content.replace(PLACEHOLDER_REGEX, (ph, fieldName) => {
-      foundPlaceholders.add(ph);
-      const val = valueByField[fieldName.toLowerCase()];
-      if (val === undefined) {
-        missedPlaceholders.add(ph);
-        return ph;
-      }
-      replaced++;
-      return escapeXml(val);
-    });
-
-    if (newContent === content) return whole;
-    const a = attrs || '';
-    return `<w:t${a} xml:space="preserve">${newContent}</w:t>`;
-  });
-
-  // ---------- 第二步：段落级兜底（占位符被 Word 拆到多个 <w:t>） ----------
-  xml = xml.replace(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g, (paraXml) => {
-    const ts = [];
-    const re = /<w:t(\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
-    let m;
-    while ((m = re.exec(paraXml)) !== null) {
-      ts.push({ start: m.index, end: m.index + m[0].length, attrs: m[1] || '', text: m[2] });
-    }
-    if (ts.length < 2) return paraXml;
-
-    const combined = ts.map(t => t.text).join('');
-    if (!combined.includes('{{')) return paraXml;
-
-    const newCombined = combined.replace(PLACEHOLDER_REGEX, (ph, fieldName) => {
-      foundPlaceholders.add(ph);
-      const val = valueByField[fieldName.toLowerCase()];
-      if (val === undefined) {
-        missedPlaceholders.add(ph);
-        return ph;
-      }
-      replaced++;
-      return escapeXml(val);
-    });
-
-    if (newCombined === combined) return paraXml;
-
-    let out = paraXml;
-    for (let i = ts.length - 1; i >= 0; i--) {
-      const t = ts[i];
-      const text = i === 0 ? newCombined : '';
-      const newTag = `<w:t${t.attrs} xml:space="preserve">${text}</w:t>`;
-      out = out.substring(0, t.start) + newTag + out.substring(t.end);
-    }
-    return out;
-  });
+  const stats = { found: new Set(), missed: new Set(), replaced: 0 };
 
   // ---------- 诊断日志 ----------
-  console.log('\n=== 占位符扫描 ===');
-  console.log(`  发现占位符 ${foundPlaceholders.size} 种：${[...foundPlaceholders].join(', ') || '（无）'}`);
-  console.log(`  成功替换 ${replaced} 处`);
-  if (missedPlaceholders.size) {
-    console.log(`  ⚠️ 未匹配到字段的占位符：${[...missedPlaceholders].join(', ')}`);
+  console.log('\n=== 模板占位符诊断 ===');
+  {
+    const candidates = [];
+    const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+      if (m[1].includes('{') || m[1].includes('$') || m[1].includes('}')) {
+        candidates.push(m[1]);
+      }
+    }
+    console.log(`含 {/}/  的 <w:t> 块共 ${candidates.length} 个：`);
+    candidates.slice(0, 40).forEach((t, i) => console.log(`    [${i}] ${JSON.stringify(t)}`));
+    if (candidates.length === 0) {
+      console.log('  ⚠️ 一个都没找到 → 占位符被拆进多个相邻 <w:t>，将由段落级替换处理。');
+    }
+  }
+
+  // ---------- 段落级替换 ----------
+  const paraRegex = /<w:p\b[^>]*>[\s\S]*?<\/w:p>/g;
+  let paraCount = 0;
+  xml = xml.replace(paraRegex, (paraXml) => {
+    paraCount++;
+    return replaceInParagraph(paraXml, valueByField, stats);
+  });
+
+  // ---------- 结果 ----------
+  console.log('\n=== 替换结果 ===');
+  console.log(`  扫描段落 ${paraCount} 个`);
+  console.log(`  发现占位符 ${stats.found.size} 种：${[...stats.found].join(', ') || '（无）'}`);
+  console.log(`  成功替换 ${stats.replaced} 处`);
+  if (stats.missed.size) {
+    console.log(`  ⚠️ 未匹配到字段的占位符：${[...stats.missed].join(', ')}`);
     console.log(`     可用字段：${Object.keys(valueByField).join(', ')}`);
   }
 
-  if (replaced === 0) {
+  if (stats.replaced === 0) {
     throw new Error(
-      '没有任何 {{$Field}} 占位符被替换。请检查：\n' +
-      '  · 模板里是否真的用了 {{$Field}} 格式（半角括号 + 半角 $）？\n' +
-      '  · userData 的字段名是否与占位符对应（大小写不敏感）？'
+      '没有任何 {{$Field}} 占位符被替换。请把上方"模板占位符诊断"的输出贴出来。'
     );
   }
 
