@@ -81,7 +81,10 @@ function setRunText(runXml, newText) {
   return runXml.replace(/<w:t(\s[^>]*)?>([\s\S]*?)<\/w:t>/g, (whole, attrs) => {
     if (!first) return '';
     first = false;
-    return `<w:t${attrs || ''} xml:space="preserve">${escapeXml(newText)}</w:t>`;
+    // 去掉原有的 xml:space，避免与下面新增的重复。
+    // 重复属性会让 XML 非法，Word / LibreOffice 会判定文件损坏而拒绝打开。
+    const cleanAttrs = (attrs || '').replace(/\s*xml:space\s*=\s*("[^"]*"|'[^']*')/g, '');
+    return `<w:t${cleanAttrs} xml:space="preserve">${escapeXml(newText)}</w:t>`;
   });
 }
 
@@ -127,12 +130,16 @@ function replaceInParagraph(paraXml, valueByField, stats) {
 
   if (newCombined === combined) return paraXml;
 
-  // 把 newCombined 放回第一个 run，其余 run 清空
+  // 选一个「带 <w:t> 的」run 作为承载文本的 run，避免把文字塞进只有图片/制表符的 run 里丢失
+  let carrier = runs.findIndex(r => /<w:t[\s>]/.test(r.xml));
+  if (carrier === -1) carrier = 0;
+
+  // 把 newCombined 放回 carrier run，其余 run 清空
   // 从后往前替换以避免位置偏移
   let out = paraXml;
   for (let i = runs.length - 1; i >= 0; i--) {
     const r = runs[i];
-    const text = i === 0 ? newCombined : '';
+    const text = i === carrier ? newCombined : '';
     const newXml = setRunText(r.xml, text);
     out = out.substring(0, r.start) + newXml + out.substring(r.end);
   }

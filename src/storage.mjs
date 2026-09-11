@@ -6,7 +6,9 @@
 //     <id>/
 //       meta.json              # { id, createdAt, files, userData, llm }
 //       uploads/               # 原始上传文件副本
-//       generated.docx         # 生成后的文档（下载时才写）
+//       generated.docx         # 生成后的 DOCX（下载时才写）
+//       generated.doc          # 由 DOCX 转换出的旧版 Word 文档（下载时才写）
+//       generated.pdf          # 由 DOCX 转换出的 PDF（下载时才写）
 // ============================================================
 import fs from 'fs/promises';
 import path from 'path';

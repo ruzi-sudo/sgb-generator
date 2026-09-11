@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { parseDocumentBuffer, generateAccountDoc } from './docx-tool.mjs';
+import { convertDocxToDoc, convertDocxToPdf, detectLibreOffice } from './doc-convert.mjs';
 import { extractUserData, FIELD_KEYS } from './llm-client.mjs';
 import {
   initStorage,
@@ -34,14 +35,22 @@ const config = {
   templatePath: process.env.TEMPLATE_PATH
     ? path.resolve(process.env.TEMPLATE_PATH)
     : path.join(projectRoot, 'templates', 'default.docx'),
-  hasTemplate: false
+  hasTemplate: false,
+  hasLibreOffice: false,
+  libreOfficeVersion: null
 };
 
 async function initConfig() {
   await initStorage();
   config.hasTemplate = fssync.existsSync(config.templatePath);
   if (!config.apiKey) console.warn('⚠️  未配置 LLM_API_KEY，上传解析将会失败。');
-  if (!config.hasTemplate) console.warn(`⚠️  未找到模板：${config.templatePath}（DOCX 生成功能将不可用）`);
+  if (!config.hasTemplate) console.warn(`⚠️  未找到模板：${config.templatePath}（DOCX/DOC 生成功能将不可用）`);
+
+  config.libreOfficeVersion = await detectLibreOffice();
+  config.hasLibreOffice = Boolean(config.libreOfficeVersion);
+  if (!config.hasLibreOffice) {
+    console.warn('⚠️  未检测到 LibreOffice，无法生成旧版 .doc（安装 libreoffice 或配置 LIBREOFFICE_BIN）');
+  }
 }
 
 // ------------------------------------------------------------
@@ -62,6 +71,8 @@ app.get('/api/config', (c) => c.json({
   baseURL: config.baseURL,
   hasApiKey: Boolean(config.apiKey),
   hasTemplate: config.hasTemplate,
+  hasLibreOffice: config.hasLibreOffice,
+  libreOfficeVersion: config.libreOfficeVersion,
   fields: FIELD_KEYS
 }));
 
@@ -137,18 +148,8 @@ app.delete('/api/records/:id', async (c) => {
 });
 
 // ------------------------------------------------------------
-// 3) 下载：userData / 原始文件 / 生成的 DOCX
+// 3) 下载：原始文件 / 生成的 PDF、DOC、DOCX
 // ------------------------------------------------------------
-app.get('/api/records/:id/userdata', async (c) => {
-  const id = c.req.param('id');
-  const record = await getRecord(id).catch(() => null);
-  if (!record) return c.json({ error: '记录不存在' }, 404);
-
-  c.header('Content-Type', 'application/json; charset=utf-8');
-  c.header('Content-Disposition', `attachment; filename="userData-${id}.json"`);
-  return c.body(JSON.stringify(record.userData, null, 2));
-});
-
 app.get('/api/records/:id/files/:name', async (c) => {
   const id = c.req.param('id');
   const name = c.req.param('name');
@@ -165,6 +166,13 @@ app.get('/api/records/:id/files/:name', async (c) => {
   }
 });
 
+// 生成填充后的 DOCX（内部使用 / 供 .doc 转换复用）
+function buildGeneratedDocx(id, record) {
+  const outPath = path.join(getRecordDir(id), 'generated.docx');
+  generateAccountDoc(config.templatePath, outPath, record.userData);
+  return outPath;
+}
+
 app.get('/api/records/:id/docx', async (c) => {
   const id = c.req.param('id');
   if (!config.hasTemplate) return c.json({ error: '服务器未配置模板 DOCX' }, 500);
@@ -172,14 +180,67 @@ app.get('/api/records/:id/docx', async (c) => {
   const record = await getRecord(id).catch(() => null);
   if (!record) return c.json({ error: '记录不存在' }, 404);
 
-  const outPath = path.join(getRecordDir(id), 'generated.docx');
   try {
-    generateAccountDoc(config.templatePath, outPath, record.userData);
+    const outPath = buildGeneratedDocx(id, record);
     const buf = await fs.readFile(outPath);
     return new Response(buf, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'Content-Disposition': `attachment; filename="Account-${id}.docx"`
+      }
+    });
+  } catch (err) {
+    return c.json({ error: `生成失败：${err.message}` }, 500);
+  }
+});
+
+// PDF
+app.get('/api/records/:id/pdf', async (c) => {
+  const id = c.req.param('id');
+  if (!config.hasTemplate) return c.json({ error: '服务器未配置模板 DOCX' }, 500);
+  if (!config.hasLibreOffice) {
+    return c.json({ error: '服务器未检测到 LibreOffice，无法生成 PDF（请安装 libreoffice 或配置 LIBREOFFICE_BIN）' }, 500);
+  }
+
+  const record = await getRecord(id).catch(() => null);
+  if (!record) return c.json({ error: '记录不存在' }, 404);
+
+  try {
+    const docxPath = buildGeneratedDocx(id, record);
+    const pdfPath = path.join(getRecordDir(id), 'generated.pdf');
+    await convertDocxToPdf(docxPath, pdfPath);
+    const buf = await fs.readFile(pdfPath);
+    return new Response(buf, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="Account-${id}.pdf"`
+      }
+    });
+  } catch (err) {
+    return c.json({ error: `生成失败：${err.message}` }, 500);
+  }
+});
+
+// 旧版 Word 二进制文档（.doc，Word 97-2003）
+app.get('/api/records/:id/doc', async (c) => {
+  const id = c.req.param('id');
+  if (!config.hasTemplate) return c.json({ error: '服务器未配置模板 DOCX' }, 500);
+  if (!config.hasLibreOffice) {
+    return c.json({ error: '服务器未检测到 LibreOffice，无法生成 .doc（请安装 libreoffice 或配置 LIBREOFFICE_BIN）' }, 500);
+  }
+
+  const record = await getRecord(id).catch(() => null);
+  if (!record) return c.json({ error: '记录不存在' }, 404);
+
+  try {
+    const docxPath = buildGeneratedDocx(id, record);
+    const docPath = path.join(getRecordDir(id), 'generated.doc');
+    await convertDocxToDoc(docxPath, docPath);
+    const buf = await fs.readFile(docPath);
+    return new Response(buf, {
+      headers: {
+        'Content-Type': 'application/msword',
+        'Content-Disposition': `attachment; filename="Account-${id}.doc"`
       }
     });
   } catch (err) {
@@ -196,5 +257,6 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`\n🚀 服务已启动：http://localhost:${info.port}`);
   console.log(`   LLM    : ${config.baseURL}  [${config.model}]`);
   console.log(`   模板    : ${config.hasTemplate ? config.templatePath : '（未配置）'}`);
+  console.log(`   转换器  : ${config.hasLibreOffice ? config.libreOfficeVersion : '（未检测到 LibreOffice，.doc 不可用）'}`);
   console.log(`   缓存目录: ./cache\n`);
 });
