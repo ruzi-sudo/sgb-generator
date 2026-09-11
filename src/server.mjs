@@ -49,7 +49,10 @@ async function initConfig() {
   config.libreOfficeVersion = await detectLibreOffice();
   config.hasLibreOffice = Boolean(config.libreOfficeVersion);
   if (!config.hasLibreOffice) {
-    console.warn('⚠️  未检测到 LibreOffice，无法生成旧版 .doc（安装 libreoffice 或配置 LIBREOFFICE_BIN）');
+    const hint = process.platform === 'darwin'
+      ? '（macOS：brew install --cask libreoffice）'
+      : '（Ubuntu：sudo apt install libreoffice-writer）';
+    console.warn(`⚠️  未检测到 LibreOffice，无法生成 .doc / PDF${hint}，或配置 LIBREOFFICE_BIN 指定 soffice`);
   }
 }
 

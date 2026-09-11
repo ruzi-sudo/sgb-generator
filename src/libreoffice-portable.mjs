@@ -1,20 +1,25 @@
 // src/libreoffice-portable.mjs
 // ============================================================
-// 管理项目内置（lib/）的便携版 LibreOffice。
+// 管理可用的 LibreOffice。
 //
 // 目录结构：
 //   lib/
 //     debs/             # Ubuntu 的 .deb 安装包（提交进仓库）
 //     libreoffice/      # 解包产物（自动生成，已 gitignore）
 //
+// 平台差异：
+//   - Linux ：优先用项目内置的便携版（lib/debs 自动解包），否则回退 PATH 里的 soffice
+//   - macOS ：lib/debs 是 Linux 二进制，无法在 macOS 上运行；改为自动探测
+//             /Applications/LibreOffice.app/Contents/MacOS/soffice
+//
 // 为什么提交的是 .deb 而不是解包后的文件？
 //   解包后最大的 program/libmergedlo.so 超过 100MB，超过 GitHub 单文件硬上限，
 //   无法用普通 git 推送；而每个 .deb 都远小于 100MB，可以安全提交。
-//   首次使用时会自动用 dpkg-deb 解包并做必要修补。
 // ============================================================
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import fssync from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -31,6 +36,9 @@ export const LO_BIN   = path.join(LO_PROGRAM, 'soffice');
 const MULTIARCH = process.arch === 'x64'
   ? 'x86_64-linux-gnu'
   : `${process.arch}-linux-gnu`;
+
+const IS_LINUX = process.platform === 'linux';
+const IS_MAC   = process.platform === 'darwin';
 
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
@@ -98,18 +106,37 @@ async function extractDebs() {
 
 let ensurePromise = null;
 
+/** macOS 上常见的 LibreOffice 安装位置 */
+function macOSCandidates() {
+  return [
+    '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+    path.join(os.homedir(), 'Applications/LibreOffice.app/Contents/MacOS/soffice')
+  ];
+}
+
+async function findMacLibreOffice() {
+  for (const p of macOSCandidates()) {
+    if (await exists(p)) return p;
+  }
+  return null;
+}
+
 /**
- * 确保便携版 LibreOffice 可用，返回 soffice 可执行文件路径。
- * - 已解包：直接返回
- * - 未解包但有 lib/debs：自动解包（只做一次）
- * - 都没有：返回 null
+ * 确保有可用的 LibreOffice，返回 soffice 可执行文件路径。
+ * - Linux：优先 lib/ 内置便携版；缺失则用 lib/debs 自动解包；都没有返回 null
+ * - macOS：探测 /Applications/LibreOffice.app；没装返回 null（由调用方回退 PATH）
  */
 export function ensureLibreOffice() {
   if (!ensurePromise) {
     ensurePromise = (async () => {
-      if (await exists(LO_BIN)) return LO_BIN;
-      if (await exists(DEB_DIR)) await extractDebs();
-      return (await exists(LO_BIN)) ? LO_BIN : null;
+      if (IS_LINUX) {
+        if (await exists(LO_BIN)) return LO_BIN;
+        if (await exists(DEB_DIR)) await extractDebs();
+        if (await exists(LO_BIN)) return LO_BIN;
+        return null;
+      }
+      if (IS_MAC) return findMacLibreOffice();
+      return null;
     })().catch(err => {
       ensurePromise = null; // 允许下次重试
       throw err;
@@ -118,15 +145,16 @@ export function ensureLibreOffice() {
   return ensurePromise;
 }
 
-/** 运行便携版 LibreOffice 所需的环境变量（LD_LIBRARY_PATH / 无头渲染后端等） */
+/** 运行 LibreOffice 所需的环境变量（Linux 才需要 LD_LIBRARY_PATH / 无头渲染后端） */
 export function loEnv() {
+  const env = { ...process.env };
+  if (!IS_LINUX) return env;
+
+  env.SAL_USE_VCLPLUGIN = 'svp';
+  env.SAL_DISABLE_WATCHDOG = '1';
+
   const ldPaths = [LO_PROGRAM, path.join(LO_DIR, 'usr/lib', MULTIARCH)]
     .filter(p => fssync.existsSync(p));
-  const env = {
-    ...process.env,
-    SAL_USE_VCLPLUGIN: 'svp',
-    SAL_DISABLE_WATCHDOG: '1'
-  };
   if (ldPaths.length) {
     const ld = ldPaths.join(':');
     env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH ? `${ld}:${env.LD_LIBRARY_PATH}` : ld;
