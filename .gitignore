@@ -27,8 +27,8 @@ pids
 *.seed
 *.pid.lock
 
-# 内置 LibreOffice 的解包产物（由 lib/debs 自动生成）
-lib/libreoffice/
+# 内置 LibreOffice 的解包/安装产物（自动生成）
+lib/libreoffice*/
 
 # 系统文件
 .DS_Store

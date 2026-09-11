@@ -11,7 +11,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { ensureLibreOffice, loEnv } from './libreoffice-portable.mjs';
+import { ensureLibreOffice, libreofficePathIfReady, loEnv } from './libreoffice-portable.mjs';
 
 // 各目标格式：扩展名 + 文件头魔数（用于校验产物是否真的转成功）
 const FORMATS = {
@@ -40,18 +40,9 @@ function enqueue(task) {
   return run;
 }
 
-function resolveBinName() {
-  return process.env.LIBREOFFICE_BIN
-    || process.env.SOFFICE_BIN
-    || null;
-}
-
-/** 优先用 lib/ 下的便携版；没有则回退到 PATH 里的 soffice */
+/** 优先用可用的 LibreOffice（env / lib 缓存 / 系统），必要时自动下载安装；都没有则回退 PATH */
 async function resolveBin() {
-  const explicit = resolveBinName();
-  if (explicit) return explicit;
-  const bundled = await ensureLibreOffice();
-  return bundled || 'soffice';
+  return (await ensureLibreOffice()) || 'soffice';
 }
 
 function buildEnv() {
@@ -146,8 +137,10 @@ export function convertDocxToPdf(inputPath, outputPath) {
 export async function detectLibreOffice() {
   try {
     await fs.mkdir(PROFILE_DIR, { recursive: true });
+    const bin = await libreofficePathIfReady(); // 只检测现成的，不触发下载
+    if (!bin) return null;
     const { code, stdout, stderr } = await run(
-      await resolveBin(),
+      bin,
       ['--headless', '--nologo', '--nofirststartwizard', '--version'],
       buildEnv()
     );

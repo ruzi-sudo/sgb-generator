@@ -1,11 +1,12 @@
 {
   "name": "sgb",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "setup:libreoffice": "node src/libreoffice-portable.mjs"
   },
+
   "keywords": [],
   "author": "",
   "license": "ISC",

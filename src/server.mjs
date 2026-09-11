@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 
 import { parseDocumentBuffer, generateAccountDoc } from './docx-tool.mjs';
 import { convertDocxToDoc, convertDocxToPdf, detectLibreOffice } from './doc-convert.mjs';
+import { ensureLibreOffice, autoInstallEnabled } from './libreoffice-portable.mjs';
 import { extractUserData, FIELD_KEYS } from './llm-client.mjs';
 import {
   initStorage,
@@ -46,13 +47,17 @@ async function initConfig() {
   if (!config.apiKey) console.warn('⚠️  未配置 LLM_API_KEY，上传解析将会失败。');
   if (!config.hasTemplate) console.warn(`⚠️  未找到模板：${config.templatePath}（DOCX/DOC 生成功能将不可用）`);
 
-  config.libreOfficeVersion = await detectLibreOffice();
+  config.libreOfficeVersion = await detectLibreOffice(); // 只检测现成的，不阻塞启动
   config.hasLibreOffice = Boolean(config.libreOfficeVersion);
   if (!config.hasLibreOffice) {
-    const hint = process.platform === 'darwin'
-      ? '（macOS：brew install --cask libreoffice）'
-      : '（Ubuntu：sudo apt install libreoffice-writer）';
-    console.warn(`⚠️  未检测到 LibreOffice，无法生成 .doc / PDF${hint}，或配置 LIBREOFFICE_BIN 指定 soffice`);
+    if (autoInstallEnabled()) {
+      console.log('ℹ️  未找到 LibreOffice，将在后台自动下载安装（LIBREOFFICE_AUTO_INSTALL=0 可关闭）');
+    } else {
+      const hint = process.platform === 'darwin'
+        ? '（macOS：brew install --cask libreoffice）'
+        : '（Ubuntu：sudo apt install libreoffice-writer）';
+      console.warn(`⚠️  未检测到 LibreOffice，无法生成 .doc / PDF${hint}，或配置 LIBREOFFICE_BIN 指定 soffice`);
+    }
   }
 }
 
@@ -260,6 +265,22 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`\n🚀 服务已启动：http://localhost:${info.port}`);
   console.log(`   LLM    : ${config.baseURL}  [${config.model}]`);
   console.log(`   模板    : ${config.hasTemplate ? config.templatePath : '（未配置）'}`);
-  console.log(`   转换器  : ${config.hasLibreOffice ? config.libreOfficeVersion : '（未检测到 LibreOffice，.doc 不可用）'}`);
+  console.log(`   转换器  : ${config.hasLibreOffice ? config.libreOfficeVersion : '（准备中…）'}`);
   console.log(`   缓存目录: ./cache\n`);
 });
+
+// 后台自动安装 LibreOffice（不阻塞服务启动）；装好后自动启用 .doc / PDF
+if (!config.hasLibreOffice && autoInstallEnabled()) {
+  ensureLibreOffice()
+    .then(async (bin) => {
+      if (!bin) return;
+      config.libreOfficeVersion = await detectLibreOffice();
+      config.hasLibreOffice = true;
+      console.log(`✅ LibreOffice 已就绪：${config.libreOfficeVersion || bin}`);
+      console.log('   现在可以下载 .doc / PDF 了。\n');
+    })
+    .catch(err => {
+      console.warn(`⚠️  LibreOffice 自动安装失败：${err.message}`);
+      console.warn('   可设置 LIBREOFFICE_BIN 手动指定 soffice，或 LIBREOFFICE_AUTO_INSTALL=0 关闭自动安装。\n');
+    });
+}
