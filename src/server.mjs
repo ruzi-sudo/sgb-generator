@@ -8,7 +8,7 @@ import fssync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { parseDocumentBuffer, generateAccountDoc } from './docx-tool.mjs';
+import { parseDocumentBuffer, generateAccountDoc, normalizeDocxFonts } from './docx-tool.mjs';
 import { convertDocxToDoc, convertToPdf, detectLibreOffice } from './doc-convert.mjs';
 import { ensureLibreOffice, autoInstallEnabled } from './libreoffice-portable.mjs';
 import { extractUserData, FIELD_KEYS } from './llm-client.mjs';
@@ -174,10 +174,19 @@ app.get('/api/records/:id/files/:name', async (c) => {
   }
 });
 
-// 生成填充后的 DOCX（内部使用 / 供 .doc 转换复用）
+// 生成填充后的 DOCX（内部使用 / 供 .doc/.pdf 转换复用）
 function buildGeneratedDocx(id, record) {
-  const outPath = path.join(getRecordDir(id), 'generated.docx');
-  generateAccountDoc(config.templatePath, outPath, record.userData);
+  const dir = getRecordDir(id);
+  const outPath = path.join(dir, 'generated.docx');
+  const rawPath = path.join(dir, '.generated.raw.docx');
+
+  // 先按模板生成，再统一字体 + 去掉两端对齐/正字距。
+  // 这一步很关键：不仅要让 PDF/DOC 一致，下载到的 .docx 本身也不能再带
+  // 两端对齐，否则在 Word/WPS 里那几个空格会被拉开得很明显。
+  generateAccountDoc(config.templatePath, rawPath, record.userData);
+  normalizeDocxFonts(rawPath, outPath);
+  try { fssync.rmSync(rawPath, { force: true }); } catch { /* ignore */ }
+
   return outPath;
 }
 
