@@ -212,3 +212,59 @@ export function generateAccountDoc(inputPath, outputPath, userData) {
   zip.writeZip(outputPath);
   console.log(`✅ 已写出：${outputPath}\n`);
 }
+
+// ============================================================
+// Part C. 字体归一化（供 doc-convert 在转 PDF/DOC 前调用）
+// ------------------------------------------------------------
+// 模板里混用了 Tahoma / Calibri / Verdana / 宋体 等字体。
+// 运行环境通常缺少其中的一种或几种（例如 Linux 上没有 Tahoma），
+// LibreOffice 就会把不同的字体回退成不同的替代字体，
+// 结果同一份 PDF 里数字、字母、汉字的字体/大小看起来不一致。
+// 把整份文档统一成同一种字体后，即使该字体也缺失，
+// 回退也是全局一致的，数字和字符大小自然就对齐了。
+// ============================================================
+const DEFAULT_FONT_FAMILY =
+  process.env.PDF_FONT_FAMILY || process.env.DOC_FONT_FAMILY || 'Verdana';
+
+/**
+ * 把 DOCX 中的字体引用统一替换为 family（默认 Verdana）。
+ * 覆盖 document/styles/settings/页眉页脚 与 theme1.xml。
+ */
+export function normalizeDocxFonts(inputPath, outputPath, family = DEFAULT_FONT_FAMILY) {
+  const font = String(family || 'Verdana');
+  const zip = new AdmZip(inputPath);
+
+  const replaceFontAttrs = (xml) =>
+    xml.replace(/\bw:(ascii|hAnsi|eastAsia|cs)=("[^"]*"|'[^']*')/g, (_m, attr) =>
+      `w:${attr}="${escapeXml(font)}"`
+    );
+
+  for (const name of [
+    'word/document.xml',
+    'word/styles.xml',
+    'word/settings.xml',
+    'word/header1.xml',
+    'word/footer1.xml',
+    'word/footer2.xml'
+  ]) {
+    const entry = zip.getEntry(name);
+    if (!entry) continue;
+    zip.updateFile(name, Buffer.from(replaceFontAttrs(entry.getData().toString('utf8')), 'utf8'));
+  }
+
+  // docDefaults 用 asciiTheme="minorHAnsi" 这类主题引用，需同时改主题定义
+  const theme = zip.getEntry('word/theme/theme1.xml');
+  if (theme) {
+    const xml = theme
+      .getData()
+      .toString('utf8')
+      .replace(
+        /(<a:(?:latin|ea|cs)\b[^>]*\btypeface=")[^"]*(")/g,
+        (_m, head, tail) => `${head}${escapeXml(font)}${tail}`
+      );
+    zip.updateFile('word/theme/theme1.xml', Buffer.from(xml, 'utf8'));
+  }
+
+  zip.writeZip(outputPath);
+  return outputPath;
+}

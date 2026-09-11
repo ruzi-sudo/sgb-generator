@@ -12,6 +12,7 @@ import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { ensureLibreOffice, libreofficePathIfReady, loEnv } from './libreoffice-portable.mjs';
+import { normalizeDocxFonts } from './docx-tool.mjs';
 
 // 各目标格式：扩展名 + 文件头魔数（用于校验产物是否真的转成功）
 const FORMATS = {
@@ -85,39 +86,62 @@ async function convertOnce(inputPath, outputPath, formatKey) {
   const outDir = path.dirname(outputPath);
   await fs.mkdir(outDir, { recursive: true });
 
-  // LibreOffice 会输出 <输入文件主名>.<ext>，先清掉目标，确保拿到的是本次产物
-  const producedByLo = path.join(
-    outDir,
-    path.basename(inputPath).replace(/\.[^.]+$/, '') + '.' + fmt.ext
-  );
-  await fs.rm(outputPath, { force: true });
-  if (producedByLo !== outputPath) await fs.rm(producedByLo, { force: true });
-
-  const bin = await resolveBin();
-  const args = [
-    '--headless',
-    '--nologo',
-    '--nofirststartwizard',
-    `-env:UserInstallation=${pathToFileURL(PROFILE_DIR).href}`,
-    '--convert-to', fmt.ext,
-    '--outdir', outDir,
-    inputPath
-  ];
-
-  const { code, stderr } = await run(bin, args, buildEnv());
-
-  if (producedByLo !== outputPath && await exists(producedByLo)) {
-    await fs.rename(producedByLo, outputPath);
+  // 先把字体统一，避免环境缺少某种字体时 LibreOffice 分别回退到不同字体，
+  // 导致 PDF 里数字和字符字体/大小不一致（详见 docx-tool.normalizeDocxFonts）。
+  let srcPath = inputPath;
+  let tmpPath = null;
+  if (process.env.PDF_FONT_NORMALIZE !== '0') {
+    try {
+      tmpPath = path.join(
+        os.tmpdir(),
+        `sgb-font-${process.pid}-${Date.now()}-${path.basename(inputPath)}`
+      );
+      await normalizeDocxFonts(inputPath, tmpPath);
+      srcPath = tmpPath;
+    } catch (err) {
+      console.warn(`⚠️  字体归一化失败，按原字体转换：${err.message}`);
+      srcPath = inputPath;
+      tmpPath = null;
+    }
   }
 
-  if (code !== 0 || !(await exists(outputPath))) {
-    const tail = stderr.trim().split('\n').filter(Boolean).slice(-3).join(' | ');
-    throw new Error(`LibreOffice 转换失败（exit ${code}）：${tail || '无错误输出'}`);
-  }
+  try {
+    // LibreOffice 会输出 <输入文件主名>.<ext>，先清掉目标，确保拿到的是本次产物
+    const producedByLo = path.join(
+      outDir,
+      path.basename(srcPath).replace(/\.[^.]+$/, '') + '.' + fmt.ext
+    );
+    await fs.rm(outputPath, { force: true });
+    if (producedByLo !== outputPath) await fs.rm(producedByLo, { force: true });
 
-  const head = (await fs.readFile(outputPath)).subarray(0, fmt.magic.length);
-  if (!head.equals(fmt.magic)) {
-    throw new Error(`转换结果不是有效的 ${fmt.label}`);
+    const bin = await resolveBin();
+    const args = [
+      '--headless',
+      '--nologo',
+      '--nofirststartwizard',
+      `-env:UserInstallation=${pathToFileURL(PROFILE_DIR).href}`,
+      '--convert-to', fmt.ext,
+      '--outdir', outDir,
+      srcPath
+    ];
+
+    const { code, stderr } = await run(bin, args, buildEnv());
+
+    if (producedByLo !== outputPath && await exists(producedByLo)) {
+      await fs.rename(producedByLo, outputPath);
+    }
+
+    if (code !== 0 || !(await exists(outputPath))) {
+      const tail = stderr.trim().split('\n').filter(Boolean).slice(-3).join(' | ');
+      throw new Error(`LibreOffice 转换失败（exit ${code}）：${tail || '无错误输出'}`);
+    }
+
+    const head = (await fs.readFile(outputPath)).subarray(0, fmt.magic.length);
+    if (!head.equals(fmt.magic)) {
+      throw new Error(`转换结果不是有效的 ${fmt.label}`);
+    }
+  } finally {
+    if (tmpPath) await fs.rm(tmpPath, { force: true }).catch(() => {});
   }
 }
 
