@@ -227,7 +227,10 @@ const DEFAULT_FONT_FAMILY =
   process.env.PDF_FONT_FAMILY || process.env.DOC_FONT_FAMILY || 'Verdana';
 
 /**
- * 把 DOCX 中的字体引用统一替换为 family（默认 Verdana）。
+ * 把 DOCX 中的字体引用统一替换为 family（默认 Verdana），
+ * 并顺手修掉会造成「字符之间出现空格」的排版属性：
+ *   - 两端对齐（w:jc=both/distribute）会把空格拉得很开，改成左对齐；
+ *   - run 级正字距（<w:spacing w:val="正数"/>）会在字符间插空隙，删除。
  * 覆盖 document/styles/settings/页眉页脚 与 theme1.xml。
  */
 export function normalizeDocxFonts(inputPath, outputPath, family = DEFAULT_FONT_FAMILY) {
@@ -239,6 +242,13 @@ export function normalizeDocxFonts(inputPath, outputPath, family = DEFAULT_FONT_
       `w:${attr}="${escapeXml(font)}"`
     );
 
+  const fixSpacing = (xml) =>
+    xml
+      // 两端对齐 / 分散对齐 → 左对齐
+      .replace(/(<w:jc\b[^>]*\bw:val=")(?:both|distribute)(")/g, '$1left$2')
+      // 删除 run 级正字距；段落间距（带 before/after/line 属性）不受影响
+      .replace(/<w:spacing w:val="\d+"\/>/g, '');
+
   for (const name of [
     'word/document.xml',
     'word/styles.xml',
@@ -249,7 +259,8 @@ export function normalizeDocxFonts(inputPath, outputPath, family = DEFAULT_FONT_
   ]) {
     const entry = zip.getEntry(name);
     if (!entry) continue;
-    zip.updateFile(name, Buffer.from(replaceFontAttrs(entry.getData().toString('utf8')), 'utf8'));
+    const xml = fixSpacing(replaceFontAttrs(entry.getData().toString('utf8')));
+    zip.updateFile(name, Buffer.from(xml, 'utf8'));
   }
 
   // docDefaults 用 asciiTheme="minorHAnsi" 这类主题引用，需同时改主题定义

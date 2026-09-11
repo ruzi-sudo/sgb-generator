@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { parseDocumentBuffer, generateAccountDoc } from './docx-tool.mjs';
-import { convertDocxToDoc, convertDocxToPdf, detectLibreOffice } from './doc-convert.mjs';
+import { convertDocxToDoc, convertToPdf, detectLibreOffice } from './doc-convert.mjs';
 import { ensureLibreOffice, autoInstallEnabled } from './libreoffice-portable.mjs';
 import { extractUserData, FIELD_KEYS } from './llm-client.mjs';
 import {
@@ -214,9 +214,14 @@ app.get('/api/records/:id/pdf', async (c) => {
   if (!record) return c.json({ error: '记录不存在' }, 404);
 
   try {
+    // 先生成最终 .doc（Word 97-2003 二进制），再由 .doc 转 PDF。
+    // 这样 PDF 与最终交付的 .doc 完全一致，也避开了 docx 主题字体 / 字距被
+    // LibreOffice 二次处理导致数字与字符间距不一致的问题。
     const docxPath = buildGeneratedDocx(id, record);
+    const docPath = path.join(getRecordDir(id), 'generated.doc');
     const pdfPath = path.join(getRecordDir(id), 'generated.pdf');
-    await convertDocxToPdf(docxPath, pdfPath);
+    await convertDocxToDoc(docxPath, docPath);
+    await convertToPdf(docPath, pdfPath);
     const buf = await fs.readFile(pdfPath);
     return new Response(buf, {
       headers: {

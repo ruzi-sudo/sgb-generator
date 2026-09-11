@@ -78,6 +78,22 @@ async function exists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
+/** 判断是否为 OOXML（docx）压缩包：文件头为 "PK"。.doc 是 CFB 二进制，不以 PK 开头。 */
+async function isDocxFile(p) {
+  try {
+    const fd = await fs.open(p, 'r');
+    try {
+      const buf = Buffer.alloc(2);
+      await fd.read(buf, 0, 2, 0);
+      return buf[0] === 0x50 && buf[1] === 0x4b;
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 async function convertOnce(inputPath, outputPath, formatKey) {
   const fmt = FORMATS[formatKey];
   if (!fmt) throw new Error(`不支持的转换格式：${formatKey}`);
@@ -88,9 +104,10 @@ async function convertOnce(inputPath, outputPath, formatKey) {
 
   // 先把字体统一，避免环境缺少某种字体时 LibreOffice 分别回退到不同字体，
   // 导致 PDF 里数字和字符字体/大小不一致（详见 docx-tool.normalizeDocxFonts）。
+  // 只对 docx 做归一化；.doc 已是二进制、字体已固定，无需（也无法）处理。
   let srcPath = inputPath;
   let tmpPath = null;
-  if (process.env.PDF_FONT_NORMALIZE !== '0') {
+  if (process.env.PDF_FONT_NORMALIZE !== '0' && await isDocxFile(inputPath)) {
     try {
       tmpPath = path.join(
         os.tmpdir(),
@@ -150,9 +167,14 @@ export function convertDocxToDoc(inputPath, outputPath) {
   return enqueue(() => convertOnce(inputPath, outputPath, 'doc'));
 }
 
-/** 把 docx 转成 .pdf。串行执行。 */
-export function convertDocxToPdf(inputPath, outputPath) {
+/** 把任意 LibreOffice 可识别的文档（.docx / .doc）转成 .pdf。串行执行。 */
+export function convertToPdf(inputPath, outputPath) {
   return enqueue(() => convertOnce(inputPath, outputPath, 'pdf'));
+}
+
+/** 兼容旧调用：把 docx 转成 .pdf（内部同样支持任意输入）。 */
+export function convertDocxToPdf(inputPath, outputPath) {
+  return convertToPdf(inputPath, outputPath);
 }
 
 /**
