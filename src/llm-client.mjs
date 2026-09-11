@@ -65,7 +65,13 @@ export async function extractUserData({ documents, baseURL, apiKey, model }) {
 
   const client = new OpenAI({
     baseURL: baseURL || 'https://api.openai.com/v1',
-    apiKey
+    apiKey,
+    // 某些网关（如本项目的 qwen-local）前面的 Cloudflare WAF 会封 openai-node 默认的
+    // "OpenAI/NodeJS/..." User-Agent，直接返回 403 Your request was blocked.
+    // 这里覆盖为中性 UA；可用 LLM_USER_AGENT 自定义。
+    defaultHeaders: {
+      'User-Agent': process.env.LLM_USER_AGENT || 'sgb-generator/1.0'
+    }
   });
 
   const messages = [
