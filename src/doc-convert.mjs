@@ -1,6 +1,6 @@
 // src/doc-convert.mjs
 // ============================================================
-// 把生成的 DOCX 转成其它格式（旧版 Word 二进制 .doc / PDF）。
+// 把生成的 DOCX 转成旧版 Word 二进制 .doc。
 // 使用 LibreOffice 无头模式：
 //   - 优先使用环境变量 LIBREOFFICE_BIN 指定的可执行文件
 //   - 否则使用 PATH 中的 soffice / libreoffice
@@ -14,17 +14,12 @@ import { pathToFileURL } from 'url';
 import { ensureLibreOffice, libreofficePathIfReady, loEnv } from './libreoffice-portable.mjs';
 import { normalizeDocxFonts } from './docx-tool.mjs';
 
-// 各目标格式：扩展名 + 文件头魔数（用于校验产物是否真的转成功）
+// 目标格式：扩展名 + 文件头魔数（用于校验产物是否真的转成功）
 const FORMATS = {
   doc: {
     ext: 'doc',
     label: 'Word 97-2003 二进制文档（.doc）',
     magic: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
-  },
-  pdf: {
-    ext: 'pdf',
-    label: 'PDF 文档（.pdf）',
-    magic: Buffer.from('%PDF-')
   }
 };
 
@@ -103,11 +98,11 @@ async function convertOnce(inputPath, outputPath, formatKey) {
   await fs.mkdir(outDir, { recursive: true });
 
   // 先把字体统一，避免环境缺少某种字体时 LibreOffice 分别回退到不同字体，
-  // 导致 PDF 里数字和字符字体/大小不一致（详见 docx-tool.normalizeDocxFonts）。
+  // 导致转换后的文档里数字和字符字体/大小不一致（详见 docx-tool.normalizeDocxFonts）。
   // 只对 docx 做归一化；.doc 已是二进制、字体已固定，无需（也无法）处理。
   let srcPath = inputPath;
   let tmpPath = null;
-  if (process.env.PDF_FONT_NORMALIZE !== '0' && await isDocxFile(inputPath)) {
+  if (process.env.DOC_FONT_NORMALIZE !== '0' && await isDocxFile(inputPath)) {
     try {
       tmpPath = path.join(
         os.tmpdir(),
@@ -165,16 +160,6 @@ async function convertOnce(inputPath, outputPath, formatKey) {
 /** 把 docx 转成真正的 .doc（Word 97-2003 二进制）。串行执行。 */
 export function convertDocxToDoc(inputPath, outputPath) {
   return enqueue(() => convertOnce(inputPath, outputPath, 'doc'));
-}
-
-/** 把任意 LibreOffice 可识别的文档（.docx / .doc）转成 .pdf。串行执行。 */
-export function convertToPdf(inputPath, outputPath) {
-  return enqueue(() => convertOnce(inputPath, outputPath, 'pdf'));
-}
-
-/** 兼容旧调用：把 docx 转成 .pdf（内部同样支持任意输入）。 */
-export function convertDocxToPdf(inputPath, outputPath) {
-  return convertToPdf(inputPath, outputPath);
 }
 
 /**

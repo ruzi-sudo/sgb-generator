@@ -1,6 +1,6 @@
 // src/libreoffice-portable.mjs
 // ============================================================
-// 按运行环境自动准备 LibreOffice（用于 docx → .doc / PDF 转换）
+// 按运行环境自动准备 LibreOffice（用于 docx → .doc 转换）
 //
 //   Linux  : 优先用 lib/debs 离线解包；没有则下载官方 deb 归档后解包
 //   macOS  : 优先用系统已安装的 LibreOffice；没有则下载官方 .dmg 解包到 lib/

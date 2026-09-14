@@ -204,7 +204,7 @@ function renderConfig() {
     <span>模板：${c.hasTemplate
       ? '<span class="pill pill-ok">已配置</span>'
       : '<span class="pill pill-warn">缺失</span>'}</span>
-    <span>PDF/DOC 转换：${c.hasLibreOffice
+    <span>DOC 转换：${c.hasLibreOffice
       ? '<span class="pill pill-ok">可用</span>'
       : '<span class="pill pill-warn">缺失</span>'}</span>
   `;
@@ -329,9 +329,6 @@ function renderRecords(records) {
     ).join(' · ');
 
     const canConvert = Boolean(serverConfig?.hasLibreOffice);
-    const pdfBtn = serverConfig?.hasTemplate && canConvert
-      ? `<a class="primary" href="/api/records/${r.id}/pdf">⬇️ 下载 PDF</a>`
-      : '';
     const docBtn = serverConfig?.hasTemplate
       ? (canConvert
           ? `<a href="/api/records/${r.id}/doc">⬇️ 下载 DOC</a>`
@@ -350,7 +347,6 @@ function renderRecords(records) {
       <div class="record-files">${filesHtml}</div>
       <div class="userdata">${esc(JSON.stringify(r.userData, null, 2))}</div>
       <div class="record-actions">
-        ${pdfBtn}
         ${docBtn}
       </div>
     `;

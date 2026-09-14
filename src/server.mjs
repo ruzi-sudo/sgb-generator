@@ -9,7 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { parseDocumentBuffer, generateAccountDoc, normalizeDocxFonts } from './docx-tool.mjs';
-import { convertDocxToDoc, convertToPdf, detectLibreOffice } from './doc-convert.mjs';
+import { convertDocxToDoc, detectLibreOffice } from './doc-convert.mjs';
 import { ensureLibreOffice, autoInstallEnabled } from './libreoffice-portable.mjs';
 import { extractUserData, FIELD_KEYS } from './llm-client.mjs';
 import {
@@ -56,7 +56,7 @@ async function initConfig() {
       const hint = process.platform === 'darwin'
         ? '（macOS：brew install --cask libreoffice）'
         : '（Ubuntu：sudo apt install libreoffice-writer）';
-      console.warn(`⚠️  未检测到 LibreOffice，无法生成 .doc / PDF${hint}，或配置 LIBREOFFICE_BIN 指定 soffice`);
+      console.warn(`⚠️  未检测到 LibreOffice，无法生成 .doc${hint}，或配置 LIBREOFFICE_BIN 指定 soffice`);
     }
   }
 }
@@ -156,7 +156,7 @@ app.delete('/api/records/:id', async (c) => {
 });
 
 // ------------------------------------------------------------
-// 3) 下载：原始文件 / 生成的 PDF、DOC、DOCX
+// 3) 下载：原始文件 / 生成的 DOC、DOCX
 // ------------------------------------------------------------
 app.get('/api/records/:id/files/:name', async (c) => {
   const id = c.req.param('id');
@@ -174,14 +174,14 @@ app.get('/api/records/:id/files/:name', async (c) => {
   }
 });
 
-// 生成填充后的 DOCX（内部使用 / 供 .doc/.pdf 转换复用）
+// 生成填充后的 DOCX（内部供 .doc 转换复用）
 function buildGeneratedDocx(id, record) {
   const dir = getRecordDir(id);
   const outPath = path.join(dir, 'generated.docx');
   const rawPath = path.join(dir, '.generated.raw.docx');
 
   // 先按模板生成，再统一字体 + 去掉两端对齐/正字距。
-  // 这一步很关键：不仅要让 PDF/DOC 一致，下载到的 .docx 本身也不能再带
+  // 这一步很关键：下载到的 .docx 本身也不能再带
   // 两端对齐，否则在 Word/WPS 里那几个空格会被拉开得很明显。
   generateAccountDoc(config.templatePath, rawPath, record.userData);
   normalizeDocxFonts(rawPath, outPath);
@@ -204,38 +204,6 @@ app.get('/api/records/:id/docx', async (c) => {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'Content-Disposition': `attachment; filename="Account-${id}.docx"`
-      }
-    });
-  } catch (err) {
-    return c.json({ error: `生成失败：${err.message}` }, 500);
-  }
-});
-
-// PDF
-app.get('/api/records/:id/pdf', async (c) => {
-  const id = c.req.param('id');
-  if (!config.hasTemplate) return c.json({ error: '服务器未配置模板 DOCX' }, 500);
-  if (!config.hasLibreOffice) {
-    return c.json({ error: '服务器未检测到 LibreOffice，无法生成 PDF（请安装 libreoffice 或配置 LIBREOFFICE_BIN）' }, 500);
-  }
-
-  const record = await getRecord(id).catch(() => null);
-  if (!record) return c.json({ error: '记录不存在' }, 404);
-
-  try {
-    // 先生成最终 .doc（Word 97-2003 二进制），再由 .doc 转 PDF。
-    // 这样 PDF 与最终交付的 .doc 完全一致，也避开了 docx 主题字体 / 字距被
-    // LibreOffice 二次处理导致数字与字符间距不一致的问题。
-    const docxPath = buildGeneratedDocx(id, record);
-    const docPath = path.join(getRecordDir(id), 'generated.doc');
-    const pdfPath = path.join(getRecordDir(id), 'generated.pdf');
-    await convertDocxToDoc(docxPath, docPath);
-    await convertToPdf(docPath, pdfPath);
-    const buf = await fs.readFile(pdfPath);
-    return new Response(buf, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="Account-${id}.pdf"`
       }
     });
   } catch (err) {
@@ -283,7 +251,7 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`   缓存目录: ./cache\n`);
 });
 
-// 后台自动安装 LibreOffice（不阻塞服务启动）；装好后自动启用 .doc / PDF
+// 后台自动安装 LibreOffice（不阻塞服务启动）；装好后自动启用 .doc
 if (!config.hasLibreOffice && autoInstallEnabled()) {
   ensureLibreOffice()
     .then(async (bin) => {
@@ -291,7 +259,7 @@ if (!config.hasLibreOffice && autoInstallEnabled()) {
       config.libreOfficeVersion = await detectLibreOffice();
       config.hasLibreOffice = true;
       console.log(`✅ LibreOffice 已就绪：${config.libreOfficeVersion || bin}`);
-      console.log('   现在可以下载 .doc / PDF 了。\n');
+      console.log('   现在可以下载 .doc 了。\n');
     })
     .catch(err => {
       console.warn(`⚠️  LibreOffice 自动安装失败：${err.message}`);
