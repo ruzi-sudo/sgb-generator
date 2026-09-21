@@ -5,12 +5,15 @@
 import OpenAI from 'openai';
 
 export const FIELDS_SCHEMA = {
-  date:             '文档日期（统一输出 YYYY-MM-DD 格式）',
-  accountNumber:    '银行账户号码（纯数字，不含空格或其他分隔符，保留完整数字，不要省略前导 0）',
-  iban:             'IBAN 国际银行账户号码（不含空格或其他分隔符，例如 BH75SGBD79456800000030）',
-  currency:         '货币类型，3 位大写字母代码（如 USD / EUR / CNY）',
-  recipientName:    '收款人姓名（通常全大写，与文档保持一致）',
-  recipientAddress: '收款人地址（保留文档中原始写法，含门牌、城市、邮编、国家）'
+  date:                       '文档日期（统一输出 YYYY-MM-DD 格式）',
+  accountNumber:              '银行账户号码（纯数字，不含空格或其他分隔符，保留完整数字，不要省略前导 0）',
+  iban:                       'IBAN 国际银行账户号码（不含空格或其他分隔符，例如 BH75SGBD79456800000030）',
+  currency:                   '货币类型，3 位大写字母代码（如 USD / EUR / CNY）',
+  recipientName:              '收款人姓名（通常全大写，与文档保持一致）',
+  recipientAddress:           '收款人地址（保留文档中原始写法，含门牌、城市、邮编、国家）',
+  intermediaryBankName:       '中间行（Intermediary Bank）名称（与文档保持一致）',
+  intermediaryBankSWIFTCode:  '中间行 SWIFT/BIC 代码（不含空格、制表符或换行）',
+  intermediaryBankAddress:    '中间行地址（保留文档中原始写法，含门牌、城市、邮编、国家）'
 };
 
 export const FIELD_KEYS = Object.keys(FIELDS_SCHEMA);
@@ -21,17 +24,17 @@ const SYSTEM_PROMPT = `你是一位专业的银行文档信息提取专家。用
 ${FIELD_KEYS.map(k => `- ${k}: ${FIELDS_SCHEMA[k]}`).join('\n')}
 
 【严格规则】
-1. 输出必须是合法 JSON 对象，键名严格使用上述 6 个英文键，不得新增/改名/遗漏。
+1. 输出必须是合法 JSON 对象，键名严格使用上述 9 个英文键，不得新增/改名/遗漏。
 2. 找不到的字段值设为 null。
 3. 不要输出任何解释、注释、markdown 代码块，只输出纯 JSON。
 4. 若文档中存在"黄色高亮"文本，优先作为字段值的来源。
 5. 多份文档冲突时，以最后一份文档为准。
 6. 数字类字段保留完整原始格式。
-7. address 不要做拼写纠正，原样输出。
-8. accountNumber 和 iban 必须去掉所有空格、制表符、换行等分隔符，输出连续字符串。
+7. recipientAddress 和 intermediaryBankAddress 不要做拼写纠正，原样输出。
+8. accountNumber、iban 和 intermediaryBankSWIFTCode 必须去掉所有空格、制表符、换行等分隔符，输出连续字符串。
 
 【输出示例】
-{"date":"2025-03-14","accountNumber":"79456800000030","iban":"BH75SGBD79456800000030","currency":"USD","recipientName":"FU FANGRONG","recipientAddress":"24HAO DIERNONG..."}`;
+{"date":"2025-03-14","accountNumber":"79456800000030","iban":"BH75SGBD79456800000030","currency":"USD","recipientName":"FU FANGRONG","recipientAddress":"24HAO DIERNONG...","intermediaryBankName":"STANDARD CHARTERED BANK","intermediaryBankSWIFTCode":"SCBLUS33XXX","intermediaryBankAddress":"1095 AVENUE OF THE AMERICAS, NEW YORK, NY 10036, USA"}`;
 
 function buildUserPrompt(documents) {
   return documents.map((doc, i) => {
@@ -110,8 +113,8 @@ export async function extractUserData({ documents, baseURL, apiKey, model }) {
   const userData = {};
   for (const key of FIELD_KEYS) userData[key] = raw[key] ?? null;
 
-  // 兜底：即使模型仍返回带空格的账号/IBAN，也去掉所有空白字符
-  for (const key of ['accountNumber', 'iban']) {
+  // 兜底：即使模型仍返回带空格的账号、IBAN 或 SWIFT/BIC，也去掉所有空白字符
+  for (const key of ['accountNumber', 'iban', 'intermediaryBankSWIFTCode']) {
     if (typeof userData[key] === 'string') userData[key] = userData[key].replace(/\s+/g, '');
   }
   return userData;
