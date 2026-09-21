@@ -29,7 +29,7 @@ const projectRoot = path.resolve(__dirname, '..');
 // 配置
 // ------------------------------------------------------------
 const config = {
-  port: Number(process.env.PORT || 3000),
+  port: Number(process.env.PORT || 3408),
   baseURL: process.env.LLM_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
   apiKey:  process.env.LLM_API_KEY  || process.env.OPENAI_API_KEY || '',
   model:   process.env.LLM_MODEL    || process.env.OPENAI_MODEL    || 'gpt-4o-mini',
