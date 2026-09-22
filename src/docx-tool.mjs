@@ -119,8 +119,11 @@ function replaceInParagraph(paraXml, valueByField, stats) {
   // 做替换
   const newCombined = combined.replace(PLACEHOLDER_REGEX, (ph, fieldName) => {
     stats.found.add(ph);
-    const val = valueByField[fieldName.toLowerCase()];
+    const normalizedFieldName = fieldName.toLowerCase();
+    const val = valueByField[normalizedFieldName];
     if (val === undefined) {
+      // 模板中完全未知的字段仍保留，便于发现模板配置错误；
+      // 已知但识别结果为 null 的字段会命中上面的空字符串并被清空。
       stats.missed.add(ph);
       return ph;
     }
@@ -152,11 +155,12 @@ function replaceInParagraph(paraXml, valueByField, stats) {
 export function generateAccountDoc(inputPath, outputPath, userData) {
   if (!userData || typeof userData !== 'object') throw new Error('userData 无效');
 
-  // 字段索引：小写字段名 → 字符串值
+  // 字段索引：小写字段名 → 字符串值。
+  // null/undefined 表示模型没有识别出该字段，但模板中的对应列仍然要被清空，
+  // 不能保留 {{$Field}} 占位符。
   const valueByField = {};
   for (const [k, v] of Object.entries(userData)) {
-    if (v === undefined || v === null) continue;
-    valueByField[k.toLowerCase()] = String(v);
+    valueByField[k.toLowerCase()] = v === undefined || v === null ? '' : String(v);
   }
 
   const zip = new AdmZip(inputPath);
